@@ -1,0 +1,144 @@
+version: '3'
+services:
+  nextcloud:
+    container_name: nextcloud-app
+    restart: unless-stopped
+    image: nextcloud:latest
+    environment:
+      - "TZ=Europe/Berlin"
+      - "REDIS_HOST=redis-nextcloud"
+      - "REDIS_HOST_PORT=6379"
+      - "REDIS_HOST_PASSWORD=123456798"
+      - "NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.yourdomain.com"
+      - "NEXTCLOUD_HOSTNAME=nextcloud.yourdomain.com"
+      - "APACHE_DISABLE_REWRITE_IP=1"
+      - "TRUSTED_PROXIES=172.18.0.0/16"
+    networks:
+      - default
+      - proxy
+    volumes:
+      - nextcloud-main:/var/www/html
+      - nextcloud-apps:/var/www/html/apps
+      - nextcloud-config:/var/www/html/config
+      - nextcloud-data:/var/www/html/data
+    depends_on:
+      - db
+      - redis
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.nextcloud.entrypoints=http"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.yourdomain.com`)"
+      - "traefik.http.middlewares.nextcloud-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.nextcloud.middlewares=nextcloud-https-redirect"
+      - "traefik.http.routers.nextcloud-secure.entrypoints=https"
+      - "traefik.http.routers.nextcloud-secure.rule=Host(`nextcloud.yourdomain.com`)"
+      - "traefik.http.routers.nextcloud-secure.tls=true"
+      - "traefik.http.routers.nextcloud-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.nextcloud-secure.service=nextcloud"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+      - "traefik.http.routers.nextcloud-secure.middlewares=secHeaders@file,nextcloud-dav"
+      - "traefik.http.middlewares.nextcloud-dav.redirectregex.permanent=true"
+      - "traefik.http.middlewares.nextcloud-dav.redirectregex.regex=https://(.*)/.well-known/(card|cal)dav"
+      - "traefik.http.middlewares.nextcloud-dav.redirectregex.replacement=https://$$1/remote.php/dav/"
+
+  cron:
+    container_name: nextcloud-cron
+    image: nextcloud:latest
+    restart: unless-stopped
+    environment:
+      - "TZ=Europe/Berlin"
+    volumes:
+      - nextcloud-main:/var/www/html
+      - nextcloud-apps:/var/www/html/apps
+      - nextcloud-config:/var/www/html/config
+      - nextcloud-data:/var/www/html/data
+    entrypoint: /cron.sh
+    networks:
+      - default
+
+  db:
+    container_name: nextcloud-mariadb
+    restart: unless-stopped
+    image: mariadb:latest
+    command: --transaction-isolation=READ-COMMITTED --log-bin=ROW --innodb_read_only_compressed=OFF
+    environment:
+      - "TZ=Europe/Berlin"
+      - "MYSQL_ROOT_PASSWORD=SetYourDBrootPasswordHere"
+      - "MYSQL_DATABASE=nextcloud"
+      - "MYSQL_USER=nextcloud"
+      - "MYSQL_PASSWORD=SetYourDbPasswordHere"
+      - "MYSQL_INITDB_SKIP_TZINFO=1"
+    volumes:
+      - nextcloud-database:/var/lib/mysql
+    networks:
+      - default
+
+  documentserver:
+    container_name: nextcloud-documentserver
+    restart: unless-stopped
+    image: onlyoffice/documentserver:latest
+    environment:
+      - "TZ=Europe/Berlin"
+      - "JWT_ENABLED=true"
+      - "JWT_SECRET=SetYourJWTTokenHere"
+      - "JWT_HEADER=Authorization"
+      - "JWT_IN_BODY=true"
+      - "WOPI_ENABLED=true"
+    networks:
+      - proxy
+    volumes:
+      - nextcloud-documentserver-logs:/var/log/onlyoffice
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.documentserver.entrypoints=http"
+      - "traefik.http.routers.documentserver.rule=Host(`documentserver.yourdomain.de`)"
+      - "traefik.http.middlewares.documentserver-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.documentserver.middlewares=documentserver-https-redirect"
+      - "traefik.http.routers.documentserver-secure.entrypoints=https"
+      - "traefik.http.routers.documentserver-secure.rule=Host(`documentserver.yourdomain.de`)"
+      - "traefik.http.routers.documentserver-secure.tls=true"
+      - "traefik.http.routers.documentserver-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.documentserver-secure.service=documentserver"
+      - "traefik.http.services.documentserver.loadbalancer.server.port=80"
+      - "traefik.http.routers.documentserver-secure.middlewares=onlyofficeHeaders@file"
+    
+  redis:
+    container_name: nextcloud-redis
+    restart: unless-stopped
+    image: redis:latest
+    command: redis-server --requirepass 123456798
+    environment:
+      - "TZ=Europe/Berlin"
+    networks:
+      - default
+      
+#  elasticsearch:
+#    container_name: nextcloud-elasticsearch
+#    restart: unless-stopped
+#    image: elasticsearch:8.3.3
+#    environment:
+#      - "discovery.type=single-node"
+#      - "TZ=Europe/Berlin"
+#    ulimits:
+#      memlock:
+#        soft: -1
+#        hard: -1
+#    volumes:
+#      - nextcloud-elasticsearch:/usr/share/elasticsearch/data
+#    networks:
+#      - default
+ 
+networks:
+  proxy:
+    external: true
+
+volumes:
+   nextcloud-main:
+   nextcloud-apps:
+   nextcloud-config:
+   nextcloud-data:
+   nextcloud-database:
+   nextcloud-elasticsearch:
+   nextcloud-documentserver-logs:
